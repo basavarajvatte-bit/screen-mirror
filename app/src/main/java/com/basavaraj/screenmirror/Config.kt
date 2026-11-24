@@ -2,7 +2,7 @@ package com.basavaraj.screenmirror
 
 object Config {
     /** Address of the signaling server + iPad website (Cloudflare Worker). */
-    const val SERVER = "https://screen-mirror.example.workers.dev"
+    const val SERVER = "https://screen-mirror.basavarajvatte.workers.dev"
     const val MAX_FPS = 30
     const val MAX_SHORT_SIDE = 1080
     const val MAX_BITRATE_BPS = 8_000_000

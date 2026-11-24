@@ -13,6 +13,8 @@ android {
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "0.3.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        // Only real-phone chips: makes the APK much smaller.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // Fixed key so every new APK installs as an update over the old one.
