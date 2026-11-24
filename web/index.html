@@ -261,6 +261,7 @@ function startRelay() {
     return;
   }
   relay = true; waitKey = true;
+  $("soundBtn").textContent = actx && actx.state === "running" ? "🔊 Sound on" : "🔇 Tap for sound";
   $("video").style.display = "none"; canvas.style.display = "block";
   showStage(); overlay("Starting video…"); pokeControls();
   clearInterval(relayTimer);
@@ -304,9 +305,38 @@ function newDecoder(codec) {
   return d;
 }
 
+// ---- Sound (internet mode): 24 kHz mono 16-bit pieces, played with Web Audio ----
+const RATE = 24000;
+let actx = null, gain = null, nextT = 0, soundOn = true;
+function audioInit() {
+  try {
+    if (!actx) {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      gain = actx.createGain(); gain.connect(actx.destination);
+    }
+    actx.resume();
+  } catch (_) {}
+}
+function playPcm(buf) {
+  if (!actx || !soundOn) return;
+  if (actx.state !== "running") { $("soundBtn").textContent = "🔇 Tap for sound"; return; }
+  const n = (buf.byteLength - 9) >> 1;
+  if (n <= 0) return;
+  const dv = new DataView(buf, 9, n * 2);
+  const ab = actx.createBuffer(1, n, RATE);
+  const ch = ab.getChannelData(0);
+  for (let i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+  const now = actx.currentTime;
+  if (nextT < now + 0.03 || nextT > now + 0.6) nextT = now + 0.1; // stay in step with the picture
+  const src = actx.createBufferSource();
+  src.buffer = ab; src.connect(gain); src.start(nextT);
+  nextT += ab.duration;
+}
+
 function onFrame(buf) {
   if (!relay) startRelay();
   if (!relay) return;
+  if ((new Uint8Array(buf, 0, 1)[0] & 2) === 2) { playPcm(buf); return; }
   const dv = new DataView(buf);
   const key = (dv.getUint8(0) & 1) === 1;
   const ts = Number(dv.getBigUint64(1));
@@ -340,6 +370,7 @@ async function unlockLocalNetwork() {
 }
 
 $("connectBtn").onclick = async () => {
+  audioInit();
   $("connectBtn").style.display = "none";
 
   $("intro").textContent = "Open Screen Mirror on your phone.";
@@ -351,6 +382,15 @@ $("connectBtn").onclick = async () => {
 
 $("soundBtn").onclick = (e) => {
   e.stopPropagation();
+  if (relay) {
+    audioInit();
+    const wasRunning = actx && actx.state === "running" && soundOn;
+    soundOn = !wasRunning || !soundOn;
+    if (wasRunning) soundOn = false;
+    if (gain) gain.gain.value = soundOn ? 1 : 0;
+    $("soundBtn").textContent = soundOn ? "🔊 Sound on" : "🔇 Tap for sound";
+    return;
+  }
   const v = $("video"); v.muted = !v.muted; v.play().catch(() => {});
   $("soundBtn").textContent = v.muted ? "🔇 Tap for sound" : "🔊 Sound on";
 };

@@ -59,6 +59,7 @@ class LocalCastService : Service() {
     private var lastFrameAt = 0L
     @Volatile private var frames = 0
     private var url = ""
+    private var audio: AudioCapture? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -123,6 +124,8 @@ class LocalCastService : Service() {
         reader = newReader()
         display = p.createVirtualDisplay("ScreenMirrorLocal", width, height, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, handler)
+        audio = AudioCapture { pcm -> server?.let { if (it.audioListeners > 0) it.publishAudio(pcm) } }
+            .takeIf { it.start(this, p) }
         handler?.post(tick)
     }
 
@@ -205,6 +208,7 @@ class LocalCastService : Service() {
             try { it.stop() } catch (_: Exception) {}
         }
         projection = null
+        audio?.stop(); audio = null
         server?.stop(); server = null
         thread?.quitSafely(); thread = null; handler = null
         bitmap?.recycle(); bitmap = null

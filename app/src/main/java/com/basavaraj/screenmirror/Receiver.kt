@@ -22,7 +22,7 @@ object Receiver {
 <img id="v" alt="">
 <div id="info">Connecting…</div>
 <div id="msg"></div>
-<div id="bar"><button id="fs">⛶ Full screen</button><button id="rl">↻ Reconnect</button></div>
+<div id="bar"><button id="snd">🔇 Tap for sound</button><button id="fs">⛶ Full screen</button><button id="rl">↻ Reconnect</button></div>
 <script>
 "use strict";
 const KEY = "$key";
@@ -66,6 +66,52 @@ document.getElementById("fs").onclick = (e) => {
 };
 document.getElementById("rl").onclick = (e) => { e.stopPropagation(); fails = 0; connect(); };
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { fails = 0; connect(); } });
+// ---- Sound: raw 24 kHz mono 16-bit pieces from the phone, played with Web Audio ----
+const RATE = 24000;
+let actx = null, soundOn = false, nextT = 0, audioAbort = null;
+async function startSound() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  await actx.resume();
+  soundOn = true; document.getElementById("snd").textContent = "🔊 Sound on";
+  let tries = 0;
+  while (soundOn && tries < 20) {
+    try {
+      audioAbort = new AbortController();
+      const r = await fetch("/audio?k=" + KEY + "&t=" + Date.now(), { signal: audioAbort.signal, cache: "no-store" });
+      const reader = r.body.getReader();
+      let rest = new Uint8Array(0);
+      tries = 0;
+      while (soundOn) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const all = new Uint8Array(rest.length + value.length);
+        all.set(rest); all.set(value, rest.length);
+        const n = all.length >> 1;
+        rest = all.slice(n * 2);
+        if (n) play(new DataView(all.buffer, 0, n * 2), n);
+      }
+    } catch (_) {}
+    if (!soundOn) break;
+    tries++;
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+}
+function play(dv, n) {
+  const buf = actx.createBuffer(1, n, RATE);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+  const now = actx.currentTime;
+  if (nextT < now + 0.03 || nextT > now + 0.6) nextT = now + 0.08; // keep sound in step with picture
+  const src = actx.createBufferSource();
+  src.buffer = buf; src.connect(actx.destination); src.start(nextT);
+  nextT += buf.duration;
+}
+document.getElementById("snd").onclick = (e) => {
+  e.stopPropagation();
+  if (soundOn) { soundOn = false; try { audioAbort && audioAbort.abort(); } catch (_) {} document.getElementById("snd").textContent = "🔇 Tap for sound"; }
+  else startSound();
+};
+
 connect(); poke();
 </script>
 </body></html>"""

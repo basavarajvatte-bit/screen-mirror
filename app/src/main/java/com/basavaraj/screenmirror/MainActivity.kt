@@ -71,11 +71,14 @@ class MainActivity : Activity() {
         localMode = code.isEmpty()
         pendingCode = code
         getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(codeInput.windowToken, 0)
+        // Sound permission is needed to send the phone's audio (apps' sound only, never the microphone).
+        val need = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            need += Manifest.permission.RECORD_AUDIO
         if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF); return
-        }
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            need += Manifest.permission.POST_NOTIFICATIONS
+        if (need.isNotEmpty()) { requestPermissions(need.toTypedArray(), REQ_NOTIF); return }
         askCapture()
     }
 
@@ -86,7 +89,7 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
-        if (code == REQ_NOTIF) askCapture() // notification is helpful, not required
+        if (code == REQ_NOTIF) askCapture() // video works even if these are denied
     }
 
     @Deprecated("Deprecated in Java")

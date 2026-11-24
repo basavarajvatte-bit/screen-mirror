@@ -8,6 +8,9 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -26,6 +29,13 @@ class LocalServer(private val key: String, private val port: Int = 8080) {
     private var frameNo = 0L
 
     val viewers = AtomicInteger(0)
+    private val listeners = CopyOnWriteArrayList<ArrayBlockingQueue<ByteArray>>()
+    val audioListeners get() = listeners.size
+
+    /** Give a piece of sound to everyone listening (old pieces are dropped if a listener is slow). */
+    fun publishAudio(pcm: ByteArray) {
+        for (q in listeners) { if (!q.offer(pcm)) { q.poll(); q.offer(pcm) } }
+    }
 
     fun start() {
         val s = ServerSocket()
@@ -67,6 +77,7 @@ class LocalServer(private val key: String, private val port: Int = 8080) {
             when {
                 !okKey -> text(out, 403, "Wrong or missing key. Open the exact address shown in the phone app.")
                 path.startsWith("/stream") -> stream(out)
+                path.startsWith("/audio") -> audio(out)
                 else -> html(out)
             }
         }
@@ -110,6 +121,25 @@ class LocalServer(private val key: String, private val port: Int = 8080) {
             // viewer closed the page
         } finally {
             viewers.decrementAndGet()
+        }
+    }
+
+    /** Raw sound stream: 24 kHz mono 16-bit PCM, played by the page with Web Audio. */
+    private fun audio(out: OutputStream) {
+        val q = ArrayBlockingQueue<ByteArray>(10)
+        listeners += q
+        try {
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n" +
+                "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray())
+            out.flush()
+            while (running) {
+                val pcm = q.poll(2, TimeUnit.SECONDS) ?: continue
+                out.write(pcm)
+                out.flush()
+            }
+        } catch (_: Exception) {
+        } finally {
+            listeners -= q
         }
     }
 

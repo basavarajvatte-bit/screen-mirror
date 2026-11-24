@@ -52,7 +52,11 @@ class RelayCastService : Service() {
         private const val QUEUE_HIGH = 1_000_000L   // bytes waiting to upload: network is too slow
         private const val QUEUE_LOW = 200_000L
         private const val FLAG_KEY = 1
+        private const val FLAG_AUDIO = 2
     }
+
+    private var audio: AudioCapture? = null
+    private var soundOn = false
 
     private var thread: HandlerThread? = null
     private var h: Handler? = null
@@ -147,6 +151,7 @@ class RelayCastService : Service() {
                 token = m.optString("token")
                 receiverOnline = m.optBoolean("receiverOnline", true)
                 try { ensureEncoder() } catch (e: Exception) { finish("Encoder error: ${e.message}", sendBye = true); return }
+                startAudio()
                 announce()
             }
             "peer" -> if (m.optString("role") == "receiver") {
@@ -161,10 +166,29 @@ class RelayCastService : Service() {
         }
     }
 
+    private fun startAudio() {
+        if (audio != null) return
+        val a = AudioCapture { pcm -> post { sendAudio(pcm) } }
+        soundOn = a.start(this, projection ?: return)
+        audio = if (soundOn) a else null
+    }
+
+    private fun sendAudio(pcm: ByteArray) {
+        val s = signaling ?: return
+        if (!receiverOnline || stopped || s.queued() > QUEUE_HIGH) return
+        val out = ByteArray(9 + pcm.size)
+        out[0] = FLAG_AUDIO.toByte()
+        val t = System.nanoTime() / 1000
+        for (i in 0 until 8) out[1 + i] = (t ushr (56 - 8 * i)).toByte()
+        System.arraycopy(pcm, 0, out, 9, pcm.size)
+        if (s.sendBytes(out)) sentBytes += out.size
+    }
+
     /** Tell the iPad this is a relay stream, and start with a fresh key frame. */
     private fun announce() {
         signaling?.send(JSONObject().put("type", "mode").put("mode", "relay"))
-        status { it.copy(connected = receiverOnline, message = if (receiverOnline) "Casting over internet" else "Waiting for iPad…") }
+        val snd = if (soundOn) "with sound" else "no sound (allow Microphone permission for sound)"
+        status { it.copy(connected = receiverOnline, message = if (receiverOnline) "Casting over internet, $snd" else "Waiting for iPad…") }
         requestKey()
     }
 
@@ -333,6 +357,7 @@ class RelayCastService : Service() {
         h?.removeCallbacks(statsTick)
         if (sendBye) signaling?.send(JSONObject().put("type", "bye"))
         signaling?.close(); signaling = null
+        audio?.stop(); audio = null; soundOn = false
         try { display?.release() } catch (_: Exception) {}
         display = null
         try { codec?.stop() } catch (_: Exception) {}
