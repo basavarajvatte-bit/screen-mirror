@@ -27,6 +27,7 @@ class MainActivity : Activity() {
     private companion object {
         const val REQ_CAPTURE = 10
         const val REQ_NOTIF = 11
+        var localMode = false // remembered while the app process lives
     }
 
     private lateinit var codeInput: EditText
@@ -58,13 +59,16 @@ class MainActivity : Activity() {
 
     private fun onButton() {
         if (CaptureState.current.running) {
-            stopCasting(); return
-        }
-        val code = codeInput.text.toString().trim()
-        if (!Regex("\\d{6}").matches(code)) {
-            CaptureState.update(CaptureState.Status(message = "Type the 6-digit code shown on the iPad"))
+            if (localMode) stopLocalCast() else stopCasting()
             return
         }
+        val code = codeInput.text.toString().trim()
+        // Empty code = LOCAL mode (hotspot / same Wi-Fi, phone serves the iPad itself).
+        if (code.isNotEmpty() && !Regex("\\d{6}").matches(code)) {
+            CaptureState.update(CaptureState.Status(message = "Code must be 6 digits, or leave it empty for hotspot / Wi-Fi mode"))
+            return
+        }
+        localMode = code.isEmpty()
         pendingCode = code
         getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(codeInput.windowToken, 0)
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -90,7 +94,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_CAPTURE) return
         if (resultCode == RESULT_OK && data != null) {
-            startCasting(resultCode, data, pendingCode)
+            if (localMode) startLocalCast(resultCode, data) else startCasting(resultCode, data, pendingCode)
         } else {
             CaptureState.update(CaptureState.Status(message = "Permission denied. Tap START and choose 'Start now'."))
         }
@@ -107,6 +111,7 @@ class MainActivity : Activity() {
             "same Wi-Fi" -> "Same Wi-Fi (direct)"
             "internet direct" -> "Internet (direct)"
             "via relay" -> "Internet (relay)"
+            "local" -> "Hotspot / Wi-Fi (direct)"
             else -> "Connecting…"
         } else "—"
         qualityText.text = if (!s.connected) "—" else {
@@ -151,15 +156,15 @@ class MainActivity : Activity() {
             setPadding(dp(24), dp(48), dp(24), dp(24))
         }
         root.addView(label("Screen Mirror", 28f, "#FFFFFF", bold = true))
-        statusText = label("Ready", 16f, "#B0B0B8")
+        statusText = label("Ready", 16f, "#B0B0B8").apply { setTextIsSelectable(true) }
         root.addView(statusText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
-        root.addView(label("Code from iPad", 14f, "#8E8E93"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+        root.addView(label("Hotspot / same Wi-Fi: leave code EMPTY and tap Start.\nDifferent networks: type the code from the iPad website.", 14f, "#8E8E93"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
         codeInput = EditText(this).apply {
-            hint = "123456"
+            hint = "Code (optional)"
             setHintTextColor(Color.parseColor("#48484A"))
             setTextColor(Color.WHITE)
-            textSize = 30f
+            textSize = 26f
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.3f
             gravity = Gravity.CENTER
