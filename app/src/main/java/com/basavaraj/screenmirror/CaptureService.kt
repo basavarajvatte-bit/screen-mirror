@@ -212,6 +212,9 @@ class CaptureService : Service() {
         )
         val e = EglBase.create().also { egl = it }
         factory = PeerConnectionFactory.builder()
+            // Android's network list skips the phone's own hotspot. Turning the monitor off makes
+            // WebRTC read every network interface directly, so the hotspot address is found too.
+            .setOptions(PeerConnectionFactory.Options().apply { disableNetworkMonitor = true })
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(e.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(e.eglBaseContext))
             .createPeerConnectionFactory()
