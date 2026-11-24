@@ -56,7 +56,6 @@
   <div id="quality"><span class="dot" id="qDot"></span><span id="qText">Connecting…</span></div>
   <div id="overlay"><div id="overlayText"></div><button id="overlayBtn" class="ghost" style="display:none"></button></div>
   <div id="bar">
-    <button id="soundBtn" class="ghost">🔇 Tap for sound</button>
     <button id="fsBtn" class="ghost">⛶ Full screen</button>
     <button id="discBtn" class="danger">Disconnect</button>
   </div>
@@ -261,7 +260,6 @@ function startRelay() {
     return;
   }
   relay = true; waitKey = true;
-  $("soundBtn").textContent = actx && actx.state === "running" ? "🔊 Sound on" : "🔇 Tap for sound";
   $("video").style.display = "none"; canvas.style.display = "block";
   showStage(); overlay("Starting video…"); pokeControls();
   clearInterval(relayTimer);
@@ -272,7 +270,7 @@ function startRelay() {
     if (fps < 12) { color = "var(--amber)"; label = "OK"; }
     if (fps < 5) { color = "var(--red)"; label = "Poor"; }
     $("qDot").style.background = color;
-    const snd = aChunks > 0 ? (actx && actx.state === "running" && soundOn ? "🔊 sound playing" : "🔇 sound arriving, tap for sound") : "no sound from phone";
+    const snd = aChunks > 0 ? (actx && actx.state === "running" ? "🔊 sound" : "🔇 tap screen for sound") : "🔇 phone sends no sound";
     aChunks = 0;
     $("qText").textContent = `${label} · ${canvas.width}×${canvas.height} · ${fps} FPS · ${(kbps / 1000).toFixed(1)} Mbps · internet · ${snd}`;
     send({ type: "stats", fps, width: canvas.width, height: canvas.height, kbps, rtt: null, route: "relay" });
@@ -325,7 +323,7 @@ function audioInit() {
 function playPcm(buf) {
   aChunks++;
   if (!actx || !soundOn) return;
-  if (actx.state !== "running") { $("soundBtn").textContent = "🔇 Tap for sound"; return; }
+  if (actx.state !== "running") { needTap(); return; }
   const n = (buf.byteLength - 9) >> 1;
   if (n <= 0) return;
   const dv = new DataView(buf, 9, n * 2);
@@ -386,20 +384,15 @@ $("connectBtn").onclick = async () => {
   openSocket();
 };
 
-$("soundBtn").onclick = (e) => {
-  e.stopPropagation();
-  if (relay) {
-    audioInit();
-    const wasRunning = actx && actx.state === "running" && soundOn;
-    soundOn = !wasRunning || !soundOn;
-    if (wasRunning) soundOn = false;
-    if (gain) gain.gain.value = soundOn ? 1 : 0;
-    $("soundBtn").textContent = soundOn ? "🔊 Sound on" : "🔇 Tap for sound";
-    return;
-  }
-  const v = $("video"); v.muted = !v.muted; v.play().catch(() => {});
-  $("soundBtn").textContent = v.muted ? "🔇 Tap for sound" : "🔊 Sound on";
-};
+// Sound is automatic. Only if the browser blocks it, ask for ONE tap anywhere.
+let tapAsked = false;
+function needTap() {
+  if (tapAsked) return;
+  tapAsked = true;
+  overlay("Tap anywhere to turn on sound");
+  const once = () => { audioInit(); overlay(""); tapAsked = false; $("stage").removeEventListener("click", once); };
+  $("stage").addEventListener("click", once);
+}
 
 $("fsBtn").onclick = (e) => {
   e.stopPropagation();
