@@ -48,6 +48,7 @@ const rx = await open("role=receiver&code=new");
 const s = await rx.next("session");
 assert.match(s.code, /^\d{6}$/);
 assert.ok(s.token.length >= 32);
+assert.ok(Array.isArray(s.iceServers) && s.iceServers.length > 0);
 ok(`receiver got code ${s.code} and a secret token`);
 
 // Wrong code is rejected
@@ -66,6 +67,7 @@ const tx = await open(`role=sender&code=${s.code}`);
 const j = await tx.next("joined");
 assert.ok(j.token.length >= 32);
 assert.equal(j.receiverOnline, true);
+assert.ok(Array.isArray(j.iceServers) && j.iceServers.length > 0);
 const peer = await rx.next("peer");
 assert.equal(peer.role, "sender");
 ok("phone paired; iPad notified");

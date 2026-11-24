@@ -18,6 +18,33 @@ function randomToken() {
   return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
+const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+
+// Short-lived TURN credentials from Cloudflare Realtime (only if the TURN key is configured).
+async function iceServersFor(env) {
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return STUN;
+  try {
+    const r = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl: 12 * 60 * 60 }),
+      }
+    );
+    if (!r.ok) return STUN;
+    const j = await r.json();
+    const list = Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers];
+    // Browsers block port 53; drop those URLs.
+    const clean = list
+      .map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => !/:53(\?|$)/.test(u)) }))
+      .filter((s) => s.urls.length);
+    return clean.length ? clean : STUN;
+  } catch (_) {
+    return STUN;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -43,9 +70,9 @@ export default {
     }
 
     if (url.pathname === "/api/ice") {
-      // Phase 7 will add TURN here. For now: free public STUN.
+      // Public endpoint: STUN only. TURN credentials are given only to paired devices.
       return Response.json(
-        { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] },
+        { iceServers: STUN },
         { headers: { "Cache-Control": "no-store" } }
       );
     }
@@ -57,6 +84,7 @@ export default {
 export class Room {
   constructor(ctx, env) {
     this.ctx = ctx;
+    this.env = env;
   }
 
   async fetch(request) {
@@ -93,11 +121,16 @@ export class Room {
         this.closeRole("receiver");
         this.closeRole("sender");
         this.ctx.acceptWebSocket(server, ["receiver"]);
-        server.send(JSON.stringify({ type: "session", code, token: m.receiverToken, expiresInMs: CODE_TTL_MS }));
+        server.send(JSON.stringify({
+          type: "session", code, token: m.receiverToken, expiresInMs: CODE_TTL_MS,
+          iceServers: await iceServersFor(this.env),
+        }));
         return new Response(null, { status: 101, webSocket: client });
       }
       this.ctx.acceptWebSocket(server, ["receiver"]);
-      server.send(JSON.stringify({ type: "session", code, token: meta.receiverToken, resumed: true }));
+      server.send(JSON.stringify({
+        type: "session", code, token: meta.receiverToken, resumed: true, iceServers: await iceServersFor(this.env),
+      }));
       this.notify("sender", { type: "peer", role: "receiver", state: "online" });
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -119,7 +152,9 @@ export class Room {
     }
 
     this.ctx.acceptWebSocket(server, ["sender"]);
-    server.send(JSON.stringify({ type: "joined", token: meta.senderToken, receiverOnline }));
+    server.send(JSON.stringify({
+      type: "joined", token: meta.senderToken, receiverOnline, iceServers: await iceServersFor(this.env),
+    }));
     this.notify("receiver", { type: "peer", role: "sender", state: "online" });
     return new Response(null, { status: 101, webSocket: client });
   }

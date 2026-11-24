@@ -134,6 +134,7 @@ async function handle(m) {
   switch (m.type) {
     case "session":
       session = { code: m.code, token: m.token };
+      if (Array.isArray(m.iceServers) && m.iceServers.length) iceServers = m.iceServers;
       if (!m.resumed) {
         $("code").textContent = m.code;
         $("codeBox").style.display = "block";
@@ -196,7 +197,7 @@ function newPeer() {
     const s = pc.connectionState;
     if (s === "connected") { overlay(""); retries = 0; }
     if (s === "disconnected") overlay("Weak connection… trying to recover");
-    if (s === "failed") { overlay("Connection failed. Retrying…"); send({ type: "restart" }); }
+    if (s === "failed") overlay("Connection failed. Phone is retrying…"); // phone leads all retries
   };
   clearInterval(statsTimer);
   statsTimer = setInterval(updateStats, 1000);

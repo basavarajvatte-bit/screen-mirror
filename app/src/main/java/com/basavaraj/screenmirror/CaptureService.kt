@@ -65,6 +65,7 @@ class CaptureService : Service() {
     private var signaling: Signaling? = null
     private var reconnects = 0
     private var iceRestarts = 0
+    private var rebuilds = 0
     private var stopped = false
 
     private var egl: EglBase? = null
@@ -140,6 +141,7 @@ class CaptureService : Service() {
             "joined" -> {
                 reconnects = 0
                 token = m.optString("token")
+                m.optJSONArray("iceServers")?.let { arr -> parseIce(arr)?.let { iceServers = it } }
                 status { it.copy(message = "Paired with iPad") }
                 if (m.optBoolean("receiverOnline", true)) startStreaming(fresh = pc == null)
             }
@@ -151,10 +153,15 @@ class CaptureService : Service() {
                     status { it.copy(connected = false, message = "iPad went offline. Waiting…") }
                 }
             }
-            "answer" -> pc?.setRemoteDescription(
-                Sdp { drainIce() },
-                SessionDescription(SessionDescription.Type.ANSWER, m.getString("sdp"))
-            )
+            "answer" -> {
+                val p = pc ?: return
+                // Only accept an answer when we are actually waiting for one.
+                if (p.signalingState() != PeerConnection.SignalingState.HAVE_LOCAL_OFFER) return
+                p.setRemoteDescription(
+                    Sdp { drainIce() },
+                    SessionDescription(SessionDescription.Type.ANSWER, m.getString("sdp"))
+                )
+            }
             "ice" -> {
                 val c = m.optJSONObject("candidate") ?: return
                 val cand = c.optString("candidate")
@@ -245,7 +252,7 @@ class CaptureService : Service() {
                 worker.execute {
                     when (state) {
                         PeerConnection.PeerConnectionState.CONNECTED -> {
-                            iceRestarts = 0
+                            iceRestarts = 0; rebuilds = 0
                             status { it.copy(connected = true, message = "Casting to iPad") }
                             tuneSender()
                         }
@@ -302,6 +309,8 @@ class CaptureService : Service() {
 
     private fun makeOffer(restart: Boolean) {
         val p = pc ?: return
+        // Never start a second offer while one is still waiting for its answer.
+        if (p.signalingState() != PeerConnection.SignalingState.STABLE) return
         val mc = MediaConstraints()
         if (restart) mc.mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
         p.createOffer(Sdp(onCreate = { sdp ->
@@ -316,7 +325,12 @@ class CaptureService : Service() {
     private fun iceRestart() {
         if (stopped || pc == null) return
         if (iceRestarts >= Config.MAX_ICE_RESTARTS) {
-            status { it.copy(connected = false, message = "Network too weak. Rebuilding connection…") }
+            if (rebuilds >= 2) {
+                finish("Could not reach the iPad. Put both on the same Wi-Fi, or enable the relay.", sendBye = true)
+                return
+            }
+            rebuilds++
+            status { it.copy(connected = false, message = "Network too weak. Rebuilding connection ($rebuilds/2)…") }
             startStreaming(fresh = true)
             return
         }
@@ -335,21 +349,22 @@ class CaptureService : Service() {
         try {
             val body = Signaling.http.newCall(Request.Builder().url("${Config.SERVER}/api/ice").build())
                 .execute().use { it.body?.string() } ?: return
-            val arr = JSONObject(body).getJSONArray("iceServers")
-            val list = mutableListOf<PeerConnection.IceServer>()
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val urls = o.get("urls").let { u ->
-                    if (u is org.json.JSONArray) (0 until u.length()).map { u.getString(it) } else listOf(u.toString())
-                }
-                val b = PeerConnection.IceServer.builder(urls)
-                if (o.has("username")) b.setUsername(o.getString("username"))
-                if (o.has("credential")) b.setPassword(o.getString("credential"))
-                list += b.createIceServer()
-            }
-            if (list.isNotEmpty()) iceServers = list
+            parseIce(JSONObject(body).getJSONArray("iceServers"))?.let { iceServers = it }
         } catch (_: Exception) { /* keep defaults */ }
     }
+
+    private fun parseIce(arr: org.json.JSONArray): List<PeerConnection.IceServer>? = try {
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            val urls = o.get("urls").let { u ->
+                if (u is org.json.JSONArray) (0 until u.length()).map { u.getString(it) } else listOf(u.toString())
+            }
+            val b = PeerConnection.IceServer.builder(urls)
+            if (o.has("username")) b.setUsername(o.getString("username"))
+            if (o.has("credential")) b.setPassword(o.getString("credential"))
+            b.createIceServer()
+        }.ifEmpty { null }
+    } catch (_: Exception) { null }
 
     private fun defaultIce() = listOf(
         PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()
@@ -406,7 +421,7 @@ class CaptureService : Service() {
         projectionData = null
         token = null
         pendingIce.clear()
-        reconnects = 0; iceRestarts = 0
+        reconnects = 0; iceRestarts = 0; rebuilds = 0
         wifiLock?.let { if (it.isHeld) it.release() }; wifiLock = null
         status { CaptureState.Status(message = message) }
         stopSelfSafely()
