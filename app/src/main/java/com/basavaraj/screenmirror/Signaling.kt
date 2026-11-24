@@ -5,6 +5,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -44,6 +45,12 @@ class Signaling(
     fun send(obj: JSONObject) {
         ws?.send(obj.toString())
     }
+
+    /** Send one video frame. Returns false if the link is closed or overloaded. */
+    fun sendBytes(b: ByteArray): Boolean = ws?.send(b.toByteString()) ?: false
+
+    /** Bytes still waiting to be uploaded (tells us if the network is too slow). */
+    fun queued(): Long = ws?.queueSize() ?: 0L
 
     fun close() {
         closing = true

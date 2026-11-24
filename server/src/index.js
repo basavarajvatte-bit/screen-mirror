@@ -5,6 +5,7 @@
 const CODE_TTL_MS = 2 * 60 * 1000; // pairing code valid for 2 minutes
 const SESSION_MAX_MS = 12 * 60 * 60 * 1000; // a paired session lasts at most 12 hours
 const MAX_MSG = 64 * 1024;
+const MAX_FRAME = 4 * 1024 * 1024; // one encoded video frame
 
 function randomCode() {
   const a = new Uint32Array(1);
@@ -203,7 +204,15 @@ export class Room {
   }
 
   async webSocketMessage(ws, data) {
-    if (typeof data !== "string" || data.length > MAX_MSG) return;
+    if (typeof data !== "string") {
+      // Binary = encrypted-in-transit (WSS) H.264 video frame from the phone. Pass it to the iPad only.
+      if (this.roleOf(ws) !== "sender" || data.byteLength > MAX_FRAME) return;
+      for (const r of this.ctx.getWebSockets("receiver")) {
+        try { r.send(data); } catch (_) {}
+      }
+      return;
+    }
+    if (data.length > MAX_MSG) return;
     let msg;
     try { msg = JSON.parse(data); } catch (_) { return; }
     const from = this.roleOf(ws);
@@ -224,7 +233,7 @@ export class Room {
       return;
     }
     // Relay only WebRTC signaling messages.
-    if (["offer", "answer", "ice", "restart", "stats"].includes(msg.type)) {
+    if (["offer", "answer", "ice", "restart", "stats", "mode", "keyframe"].includes(msg.type)) {
       this.notify(to, msg);
     }
   }

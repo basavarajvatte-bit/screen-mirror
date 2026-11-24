@@ -89,7 +89,19 @@ assert.equal((await tx.next("answer")).sdp, "v=0 test-answer");
 tx.sendJson({ type: "ice", candidate: { candidate: "candidate:1", sdpMid: "0", sdpMLineIndex: 0 } });
 assert.equal((await rx.next("ice")).candidate.candidate, "candidate:1");
 rx.sendJson({ type: "hack", x: 1 });
-ok("offer / answer / ICE relayed; unknown messages dropped");
+// Video frames (binary) go phone -> iPad only
+rx.binaryType = "arraybuffer";
+const gotFrame = new Promise((res) => {
+  const prev = rx.onmessage;
+  rx.onmessage = (e) => { if (typeof e.data !== "string") { rx.onmessage = prev; res(e.data); } else prev(e); };
+});
+tx.send(new Uint8Array([1, 0, 0, 0, 0, 0, 0, 0, 7, 0xaa, 0xbb]));
+const fr = new Uint8Array(await gotFrame);
+assert.equal(fr.length, 11);
+assert.equal(fr[10], 0xbb);
+rx.sendJson({ type: "keyframe" });
+await tx.next("keyframe");
+ok("offer / answer / ICE / video frames / keyframe requests relayed; unknown messages dropped");
 
 // Phone reconnects with its token
 tx.close();

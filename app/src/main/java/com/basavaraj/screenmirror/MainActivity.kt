@@ -59,7 +59,7 @@ class MainActivity : Activity() {
 
     private fun onButton() {
         if (CaptureState.current.running) {
-            if (localMode) stopLocalCast() else stopCasting()
+            if (localMode) stopLocalCast() else stopRelayCast()
             return
         }
         val code = codeInput.text.toString().trim()
@@ -94,7 +94,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_CAPTURE) return
         if (resultCode == RESULT_OK && data != null) {
-            if (localMode) startLocalCast(resultCode, data) else startCasting(resultCode, data, pendingCode)
+            if (localMode) startLocalCast(resultCode, data) else startRelayCast(resultCode, data, pendingCode)
         } else {
             CaptureState.update(CaptureState.Status(message = "Permission denied. Tap START and choose 'Start now'."))
         }
@@ -112,6 +112,7 @@ class MainActivity : Activity() {
             "internet direct" -> "Internet (direct)"
             "via relay" -> "Internet (relay)"
             "local" -> "Hotspot / Wi-Fi (direct)"
+            "relay" -> "Internet (our server)"
             else -> "Connecting…"
         } else "—"
         qualityText.text = if (!s.connected) "—" else {
@@ -159,7 +160,7 @@ class MainActivity : Activity() {
         statusText = label("Ready", 16f, "#B0B0B8").apply { setTextIsSelectable(true) }
         root.addView(statusText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
 
-        root.addView(label("Hotspot / same Wi-Fi: leave code EMPTY and tap Start.\nDifferent networks: type the code from the iPad website.", 14f, "#8E8E93"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
+        root.addView(label("iPad anywhere in the world: type the code from the iPad website.\nHotspot / same Wi-Fi only: leave code EMPTY.", 14f, "#8E8E93"), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(24) })
         codeInput = EditText(this).apply {
             hint = "Code (optional)"
             setHintTextColor(Color.parseColor("#48484A"))
