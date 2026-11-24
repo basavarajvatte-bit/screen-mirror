@@ -20,9 +20,36 @@ function randomToken() {
 
 const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
 
-// Short-lived TURN credentials from Cloudflare Realtime (only if the TURN key is configured).
+// Free relay (Open Relay Project by Metered) - same one the Sahayak app uses for video calls.
+// Credentials are time-limited (HMAC-SHA1, standard TURN REST method). Video stays encrypted
+// end-to-end by WebRTC, so the relay only passes scrambled packets it cannot read.
+const OPEN_RELAY_HOST = "staticauth.openrelay.metered.ca";
+const OPEN_RELAY_SECRET = "openrelayprojectsecret";
+
+async function openRelay() {
+  const username = String(Math.floor(Date.now() / 1000) + 12 * 60 * 60);
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(OPEN_RELAY_SECRET), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(username));
+  const credential = btoa(String.fromCharCode(...new Uint8Array(sig)));
+  return {
+    urls: [
+      `turn:${OPEN_RELAY_HOST}:80`,
+      `turn:${OPEN_RELAY_HOST}:80?transport=tcp`,
+      `turn:${OPEN_RELAY_HOST}:443`,
+      `turns:${OPEN_RELAY_HOST}:443?transport=tcp`,
+    ],
+    username,
+    credential,
+  };
+}
+
+// ICE servers for a paired device: STUN + a relay.
 async function iceServersFor(env) {
-  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return STUN;
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+    try { return [...STUN, await openRelay()]; } catch (_) { return STUN; }
+  }
   try {
     const r = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,

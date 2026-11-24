@@ -41,6 +41,7 @@ ok("receiver website is served");
 
 const ice = await (await fetch(BASE + "/api/ice")).json();
 assert.ok(Array.isArray(ice.iceServers) && ice.iceServers.length > 0);
+assert.ok(!JSON.stringify(ice).includes("credential"), "public endpoint has no relay credentials");
 ok("/api/ice returns ICE servers");
 
 // Receiver creates a session
@@ -49,6 +50,9 @@ const s = await rx.next("session");
 assert.match(s.code, /^\d{6}$/);
 assert.ok(s.token.length >= 32);
 assert.ok(Array.isArray(s.iceServers) && s.iceServers.length > 0);
+const relay = s.iceServers.find((x) => [].concat(x.urls).some((u) => u.startsWith("turn")));
+assert.ok(relay && relay.username && relay.credential, "relay credentials present");
+assert.ok(Number(relay.username) > Date.now() / 1000, "relay credentials are time-limited");
 ok(`receiver got code ${s.code} and a secret token`);
 
 // Wrong code is rejected
