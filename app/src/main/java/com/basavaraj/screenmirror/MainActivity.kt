@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var fpsText: TextView
     private lateinit var netText: TextView
     private lateinit var button: Button
+    private lateinit var controlBtn: Button
     private var pendingCode = ""
 
     private val listener: (CaptureState.Status) -> Unit = { render(it) }
@@ -50,6 +51,12 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         CaptureState.listen(listener)
+        updateControlBtn()
+    }
+
+    private fun updateControlBtn() {
+        controlBtn.text = if (ControlService.isEnabled(this)) "iPad control: ON ✅ (tap to change)"
+                          else "Allow iPad to control this phone…"
     }
 
     override fun onStop() {
@@ -203,6 +210,15 @@ class MainActivity : Activity() {
             setOnClickListener { onButton() }
         }
         root.addView(button, LinearLayout.LayoutParams(-1, dp(60)).apply { topMargin = dp(28) })
+
+        controlBtn = Button(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); isAllCaps = false
+            background = rounded("#2C2C34", 22)
+            setOnClickListener {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        root.addView(controlBtn, LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(12) })
 
         return ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#0E0E12"))

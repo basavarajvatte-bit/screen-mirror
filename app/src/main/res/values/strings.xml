@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="control_desc">Lets your paired iPad tap, swipe and type on this phone while Screen Mirror is casting. It only works during a casting session you started, and stops when casting stops. Nothing is recorded.</string>
+</resources>

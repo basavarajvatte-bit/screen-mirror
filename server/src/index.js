@@ -233,7 +233,8 @@ export class Room {
       return;
     }
     // Relay only WebRTC signaling messages.
-    if (["offer", "answer", "ice", "restart", "stats", "mode", "keyframe"].includes(msg.type)) {
+    if (["offer", "answer", "ice", "restart", "stats", "mode", "keyframe"].includes(msg.type) ||
+        (msg.type === "input" && from === "receiver")) {
       this.notify(to, msg);
     }
   }

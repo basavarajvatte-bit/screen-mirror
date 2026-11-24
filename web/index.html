@@ -25,6 +25,7 @@
   #status { font-size:16px; color:var(--muted); min-height:22px; }
 
   #stage { position:fixed; inset:0; background:#000; display:none; }
+  #stage canvas { touch-action:none; }
   #stage video, #stage canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; }
   #bar { position:absolute; left:50%; transform:translateX(-50%); bottom:calc(18px + env(safe-area-inset-bottom));
     display:flex; gap:10px; align-items:center; transition:opacity .3s; }
@@ -56,6 +57,12 @@
   <div id="quality"><span class="dot" id="qDot"></span><span id="qText">Connecting…</span></div>
   <div id="overlay"><div id="overlayText"></div><button id="overlayBtn" class="ghost" style="display:none"></button></div>
   <div id="bar">
+    <span id="ctrl" style="display:none; gap:10px">
+      <button id="backBtn" class="ghost" title="Back">◁</button>
+      <button id="homeBtn" class="ghost" title="Home">○</button>
+      <button id="recBtn" class="ghost" title="Recent apps">▢</button>
+      <button id="typeBtn" class="ghost">⌨ Type</button>
+    </span>
     <button id="fsBtn" class="ghost">⛶ Full screen</button>
     <button id="discBtn" class="danger">Disconnect</button>
   </div>
@@ -260,6 +267,7 @@ function startRelay() {
     return;
   }
   relay = true; waitKey = true;
+  $("ctrl").style.display = "inline-flex";
   $("video").style.display = "none"; canvas.style.display = "block";
   showStage(); overlay("Starting video…"); pokeControls();
   clearInterval(relayTimer);
@@ -361,6 +369,43 @@ function onFrame(buf) {
   try { decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: ts, data })); }
   catch (_) { waitKey = true; askKey(); }
 }
+
+// ---------- Control the phone from the iPad (taps, swipes, buttons, typing) ----------
+function toPhone(e) {
+  // The picture is fitted inside the canvas box ("contain"): find where it really is.
+  const r = canvas.getBoundingClientRect();
+  if (!canvas.width || !canvas.height) return null;
+  const scale = Math.min(r.width / canvas.width, r.height / canvas.height);
+  const w = canvas.width * scale, h = canvas.height * scale;
+  const left = r.left + (r.width - w) / 2, top = r.top + (r.height - h) / 2;
+  const x = (e.clientX - left) / w, y = (e.clientY - top) / h;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return { x, y };
+}
+let down = null;
+canvas.addEventListener("pointerdown", (e) => {
+  const p = toPhone(e); if (!p) return;
+  down = { ...p, t: Date.now() };
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+});
+canvas.addEventListener("pointerup", (e) => {
+  if (!down) return;
+  const p = toPhone(e) || down, ms = Date.now() - down.t;
+  const moved = Math.hypot((p.x - down.x) * canvas.width, (p.y - down.y) * canvas.height);
+  if (moved < 15) send({ type: "input", action: ms > 500 ? "long" : "tap", x: down.x, y: down.y });
+  else send({ type: "input", action: "swipe", x1: down.x, y1: down.y, x2: p.x, y2: p.y, ms: Math.min(Math.max(ms, 80), 1500) });
+  down = null;
+});
+canvas.addEventListener("pointercancel", () => { down = null; });
+const key = (a) => (e) => { e.stopPropagation(); send({ type: "input", action: a }); };
+$("backBtn").onclick = key("back");
+$("homeBtn").onclick = key("home");
+$("recBtn").onclick = key("recents");
+$("typeBtn").onclick = (e) => {
+  e.stopPropagation();
+  const t = prompt("Type text for the phone (tap a text box on the phone screen first):");
+  if (t) send({ type: "input", action: "text", text: t, enter: false });
+};
 
 // ---------- Buttons ----------
 // Safari hides this iPad's local address from WebRTC unless the page has had microphone

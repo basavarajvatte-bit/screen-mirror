@@ -101,6 +101,8 @@ assert.equal(fr.length, 11);
 assert.equal(fr[10], 0xbb);
 rx.sendJson({ type: "keyframe" });
 await tx.next("keyframe");
+rx.sendJson({ type: "input", action: "tap", x: 0.5, y: 0.5 });
+assert.equal((await tx.next("input")).action, "tap");
 ok("offer / answer / ICE / video frames / keyframe requests relayed; unknown messages dropped");
 
 // Phone reconnects with its token

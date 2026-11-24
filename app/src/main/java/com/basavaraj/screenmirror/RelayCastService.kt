@@ -161,6 +161,7 @@ class RelayCastService : Service() {
                 else status { it.copy(connected = false, message = "iPad went offline. Waiting…") }
             }
             "keyframe" -> requestKey()
+            "input" -> ControlService.instance?.handle(m)   // iPad controlling the phone
             "stats" -> { ipadFps = m.optInt("fps", -1) }
             "bye" -> finish("iPad disconnected")
             "error" -> finish(errorText(m.optString("reason")))
