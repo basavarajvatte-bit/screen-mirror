@@ -70,6 +70,7 @@ class CaptureService : Service() {
     private val mine = sortedMapOf<String, Int>()
     private val theirs = sortedMapOf<String, Int>()
     private var iceState = "new"
+    private val myHostIps = sortedSetOf<String>()
     private var stopped = false
 
     private var egl: EglBase? = null
@@ -240,7 +241,7 @@ class CaptureService : Service() {
             pc = null
             pendingIce.clear()
             iceRestarts = 0
-            mine.clear(); theirs.clear(); iceState = "new"
+            mine.clear(); theirs.clear(); myHostIps.clear(); iceState = "new"
             createPeer()
         }
         makeOffer(restart = false)
@@ -254,7 +255,11 @@ class CaptureService : Service() {
         }
         val p = factory!!.createPeerConnection(cfg, object : PeerConnection.Observer {
             override fun onIceCandidate(c: IceCandidate) {
-                worker.execute { count(mine, c.sdp); showDiag() }
+                worker.execute {
+                    count(mine, c.sdp)
+                    if (c.sdp.contains(" typ host")) c.sdp.split(" ").getOrNull(4)?.let { myHostIps += it }
+                    showDiag()
+                }
                 signaling?.send(JSONObject().put("type", "ice").put("candidate",
                     JSONObject().put("candidate", c.sdp).put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex)))
             }
@@ -362,7 +367,7 @@ class CaptureService : Service() {
     /** While not yet connected, show what the phone and iPad found, so problems are easy to spot. */
     private fun showDiag() {
         if (CaptureState.current.connected && iceState == "connected") return
-        status { it.copy(message = "Linking… ($iceState)\nPhone paths: ${fmt(mine)}\niPad paths: ${fmt(theirs)}") }
+        status { it.copy(message = "Linking… ($iceState)\nPhone paths: ${fmt(mine)}\niPad paths: ${fmt(theirs)}\nPhone IPs: ${myHostIps.joinToString(", ")}") }
     }
 
     private fun drainIce() = worker.execute {
