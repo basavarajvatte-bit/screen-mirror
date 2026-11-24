@@ -66,6 +66,10 @@ class CaptureService : Service() {
     private var reconnects = 0
     private var iceRestarts = 0
     private var rebuilds = 0
+    // Diagnostics: which network paths were found on each side.
+    private val mine = sortedMapOf<String, Int>()
+    private val theirs = sortedMapOf<String, Int>()
+    private var iceState = "new"
     private var stopped = false
 
     private var egl: EglBase? = null
@@ -166,6 +170,7 @@ class CaptureService : Service() {
                 val c = m.optJSONObject("candidate") ?: return
                 val cand = c.optString("candidate")
                 if (cand.isEmpty()) return
+                count(theirs, cand); showDiag()
                 val ice = IceCandidate(c.optString("sdpMid"), c.optInt("sdpMLineIndex"), cand)
                 val p = pc
                 if (p?.remoteDescription != null) p.addIceCandidate(ice) else pendingIce += ice
@@ -199,7 +204,10 @@ class CaptureService : Service() {
     private fun ensureCapture() {
         if (factory != null) return
         PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(applicationContext).createInitializationOptions()
+            PeerConnectionFactory.InitializationOptions.builder(applicationContext)
+                // Lets WebRTC use networks Android does not list, e.g. the phone's own hotspot.
+                .setFieldTrials("WebRTC-BindUsingInterfaceName/Enabled/")
+                .createInitializationOptions()
         )
         val e = EglBase.create().also { egl = it }
         factory = PeerConnectionFactory.builder()
@@ -232,6 +240,7 @@ class CaptureService : Service() {
             pc = null
             pendingIce.clear()
             iceRestarts = 0
+            mine.clear(); theirs.clear(); iceState = "new"
             createPeer()
         }
         makeOffer(restart = false)
@@ -245,6 +254,7 @@ class CaptureService : Service() {
         }
         val p = factory!!.createPeerConnection(cfg, object : PeerConnection.Observer {
             override fun onIceCandidate(c: IceCandidate) {
+                worker.execute { count(mine, c.sdp); showDiag() }
                 signaling?.send(JSONObject().put("type", "ice").put("candidate",
                     JSONObject().put("candidate", c.sdp).put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex)))
             }
@@ -264,7 +274,9 @@ class CaptureService : Service() {
                 }
             }
             override fun onSignalingChange(s: PeerConnection.SignalingState) {}
-            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {}
+            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {
+                worker.execute { iceState = s.name.lowercase(); showDiag() }
+            }
             override fun onIceConnectionReceivingChange(b: Boolean) {}
             override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {}
             override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
@@ -337,6 +349,20 @@ class CaptureService : Service() {
         iceRestarts++
         status { it.copy(message = "Reconnecting video ($iceRestarts/${Config.MAX_ICE_RESTARTS})…") }
         makeOffer(restart = true)
+    }
+
+    private fun count(map: MutableMap<String, Int>, cand: String) {
+        val type = Regex(" typ (\\w+)").find(cand)?.groupValues?.get(1) ?: return
+        val key = if (type == "host" && cand.contains(".local")) "host(hidden)" else type
+        map[key] = (map[key] ?: 0) + 1
+    }
+
+    private fun fmt(m: Map<String, Int>) = if (m.isEmpty()) "none" else m.entries.joinToString(" ") { "${it.key}:${it.value}" }
+
+    /** While not yet connected, show what the phone and iPad found, so problems are easy to spot. */
+    private fun showDiag() {
+        if (CaptureState.current.connected && iceState == "connected") return
+        status { it.copy(message = "Linking… ($iceState)\nPhone paths: ${fmt(mine)}\niPad paths: ${fmt(theirs)}") }
     }
 
     private fun drainIce() = worker.execute {

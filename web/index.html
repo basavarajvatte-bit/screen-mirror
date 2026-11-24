@@ -239,7 +239,7 @@ async function updateStats() {
   $("qText").textContent = `${label} · ${inb.frameWidth || "?"}×${inb.frameHeight || "?"} · ${fps} FPS · ` +
     `${(kbps / 1000).toFixed(1)} Mbps` + (rtt != null ? ` · ${rtt} ms` : "") + (route ? ` · ${route}` : "") +
     (codec ? ` · ${codec.mimeType.split("/")[1]}` : "");
-  send({ type: "stats", fps, width: inb.frameWidth, height: inb.frameHeight, kbps, rtt, route });
+  if (pc.connectionState === "connected") send({ type: "stats", fps, width: inb.frameWidth, height: inb.frameHeight, kbps, rtt, route });
 }
 
 // ---------- Buttons ----------
