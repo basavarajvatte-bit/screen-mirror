@@ -1,0 +1,46 @@
+name: Test & deploy server + iPad website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "web/**"
+      - ".github/workflows/server.yml"
+  workflow_dispatch:
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Start local server
+        run: |
+          npx wrangler dev --port 8787 --ip 127.0.0.1 > dev.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8787/api/ice && break; sleep 1; done
+
+      - name: Run tests
+        run: npm test
+
+      - name: Server log (if tests failed)
+        if: failure()
+        run: cat dev.log
+
+      - name: Deploy to Cloudflare
+        if: ${{ env.CF_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Screen Mirror</title>
+<style>
+  :root { --bg:#0b0b0f; --card:#17171d; --text:#f5f5f7; --muted:#8e8e93; --blue:#0a84ff; --green:#34c759; --amber:#ffb340; --red:#ff453a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif; overflow:hidden; }
+  button { font:inherit; border:0; border-radius:14px; padding:14px 22px; font-weight:600; cursor:pointer; }
+  .primary { background:var(--blue); color:#fff; font-size:19px; padding:18px 34px; border-radius:18px; }
+  .ghost { background:rgba(255,255,255,.12); color:#fff; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+  .danger { background:rgba(255,69,58,.9); color:#fff; }
+
+  #home { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px; padding:24px; text-align:center; }
+  #home h1 { margin:0; font-size:34px; letter-spacing:-.5px; }
+  #home p { margin:0; color:var(--muted); font-size:17px; max-width:440px; line-height:1.45; }
+  #codeBox { display:none; background:var(--card); border-radius:24px; padding:28px 36px; }
+  #code { font-size:64px; font-weight:700; letter-spacing:12px; font-variant-numeric:tabular-nums; }
+  #codeHint { color:var(--muted); margin-top:8px; font-size:15px; }
+  #status { font-size:16px; color:var(--muted); min-height:22px; }
+
+  #stage { position:fixed; inset:0; background:#000; display:none; }
+  #stage video { width:100%; height:100%; object-fit:contain; background:#000; }
+  #bar { position:absolute; left:50%; transform:translateX(-50%); bottom:calc(18px + env(safe-area-inset-bottom));
+    display:flex; gap:10px; align-items:center; transition:opacity .3s; }
+  #bar.hide { opacity:0; pointer-events:none; }
+  #quality { position:absolute; top:calc(12px + env(safe-area-inset-top)); left:12px; padding:8px 12px; border-radius:12px;
+    background:rgba(0,0,0,.55); font-size:13px; line-height:1.4; transition:opacity .3s; }
+  #quality.hide { opacity:0; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  #overlay { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:16px;
+    background:rgba(0,0,0,.6); font-size:18px; text-align:center; padding:20px; }
+</style>
+</head>
+<body>
+
+<section id="home">
+  <h1>Screen Mirror</h1>
+  <p id="intro">See your Android phone's screen live on this iPad.</p>
+  <div id="codeBox">
+    <div id="code">------</div>
+    <div id="codeHint">Type this code in the phone app, then tap START CASTING</div>
+  </div>
+  <div id="status"></div>
+  <button id="connectBtn" class="primary">Connect Mobile</button>
+</section>
+
+<section id="stage">
+  <video id="video" playsinline autoplay muted></video>
+  <div id="quality"><span class="dot" id="qDot"></span><span id="qText">Connecting…</span></div>
+  <div id="overlay"><div id="overlayText"></div><button id="overlayBtn" class="ghost" style="display:none"></button></div>
+  <div id="bar">
+    <button id="soundBtn" class="ghost">🔇 Tap for sound</button>
+    <button id="fsBtn" class="ghost">⛶ Full screen</button>
+    <button id="discBtn" class="danger">Disconnect</button>
+  </div>
+</section>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+const MAX_RETRIES = 6;
+
+let ws = null, pc = null, session = null; // session = {code, token}
+let retries = 0, retryTimer = null, statsTimer = null, pingTimer = null, closedByUser = false;
+let iceServers = [{ urls: "stun:stun.cloudflare.com:3478" }];
+let lastBytes = 0, lastTs = 0, pendingIce = [];
+
+// ---------- UI helpers ----------
+function setStatus(t) { $("status").textContent = t; }
+function showHome() { $("stage").style.display = "none"; $("home").style.display = "flex"; }
+function showStage() { $("home").style.display = "none"; $("stage").style.display = "block"; }
+function overlay(text, btnLabel, onBtn) {
+  $("overlay").style.display = text ? "flex" : "none";
+  $("overlayText").textContent = text || "";
+  const b = $("overlayBtn");
+  if (btnLabel) { b.style.display = ""; b.textContent = btnLabel; b.onclick = onBtn; } else b.style.display = "none";
+}
+let hideTimer = null;
+function pokeControls() {
+  $("bar").classList.remove("hide"); $("quality").classList.remove("hide");
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => { $("bar").classList.add("hide"); $("quality").classList.add("hide"); }, 3500);
+}
+$("stage").addEventListener("click", pokeControls);
+
+// ---------- Signaling ----------
+async function loadIce() {
+  try { const r = await fetch("/api/ice", { cache: "no-store" }); iceServers = (await r.json()).iceServers; } catch (_) {}
+}
+
+function dropWs() { if (ws) { ws.onclose = null; ws.onmessage = null; try { ws.close(); } catch (_) {} ws = null; } }
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function openSocket() {
+  clearTimeout(retryTimer);
+  dropWs();
+  const q = session ? `code=${session.code}&token=${session.token}` : "code=new";
+  ws = new WebSocket(`${WS_URL}?role=receiver&${q}`);
+  ws.onopen = () => {
+    retries = 0;
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => send({ type: "ping" }), 25000);
+  };
+  ws.onmessage = (e) => handle(JSON.parse(e.data));
+  ws.onclose = () => {
+    clearInterval(pingTimer);
+    if (closedByUser) return;
+    if (!session) { setStatus("Could not reach the server."); $("connectBtn").style.display = ""; return; }
+    scheduleRetry("Connection lost. Reconnecting…");
+  };
+}
+
+function scheduleRetry(msg) {
+  if (closedByUser) return;
+  if (retries >= MAX_RETRIES) {
+    overlay("Could not reconnect.", "Start again", () => location.reload());
+    return;
+  }
+  retries++;
+  const delay = Math.min(1000 * 2 ** (retries - 1), 15000);
+  overlay(`${msg} (try ${retries}/${MAX_RETRIES})`);
+  retryTimer = setTimeout(openSocket, delay);
+}
+
+async function handle(m) {
+  switch (m.type) {
+    case "session":
+      session = { code: m.code, token: m.token };
+      if (!m.resumed) {
+        $("code").textContent = m.code;
+        $("codeBox").style.display = "block";
+        $("connectBtn").style.display = "none";
+        setStatus("Waiting for phone…");
+        startCodeTimer(m.expiresInMs);
+      } else overlay("Reconnected. Waiting for phone…");
+      break;
+    case "peer":
+      if (m.role === "sender" && m.state === "online") { stopCodeTimer(); setStatus("Phone connected. Starting video…"); }
+      if (m.role === "sender" && m.state === "offline" && $("stage").style.display === "block")
+        overlay("Phone went offline. Waiting for it to come back…");
+      break;
+    case "offer": await onOffer(m); break;
+    case "ice":
+      if (pc && pc.remoteDescription) { try { await pc.addIceCandidate(m.candidate); } catch (_) {} }
+      else pendingIce.push(m.candidate);
+      break;
+    case "bye": endSession("Phone stopped casting."); break;
+    case "error":
+      if (m.reason === "code-in-use") { dropWs(); setTimeout(openSocket, 300); return; }
+      if (m.reason === "session-ended") { endSession("Session ended."); return; }
+      setStatus("Error: " + m.reason);
+      break;
+  }
+}
+
+let codeTimer = null;
+function startCodeTimer(ms) {
+  const end = Date.now() + ms;
+  clearInterval(codeTimer);
+  codeTimer = setInterval(() => {
+    const left = Math.max(0, Math.round((end - Date.now()) / 1000));
+    $("codeHint").textContent = left > 0
+      ? `Type this code in the phone app, then tap START CASTING · ${left}s`
+      : "Code expired.";
+    if (left === 0) {
+      clearInterval(codeTimer);
+      dropWs(); session = null;
+      $("codeBox").style.display = "none"; $("connectBtn").style.display = ""; $("connectBtn").textContent = "Get a new code";
+      setStatus("");
+    }
+  }, 500);
+}
+function stopCodeTimer() { clearInterval(codeTimer); }
+
+// ---------- WebRTC ----------
+function newPeer() {
+  if (pc) { try { pc.close(); } catch (_) {} }
+  pendingIce = [];
+  pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle" });
+  pc.onicecandidate = (e) => { if (e.candidate) send({ type: "ice", candidate: e.candidate.toJSON() }); };
+  pc.ontrack = (e) => {
+    const v = $("video");
+    if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0] || new MediaStream([e.track]);
+    v.play().catch(() => {});
+    showStage(); overlay(""); pokeControls();
+  };
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    if (s === "connected") { overlay(""); retries = 0; }
+    if (s === "disconnected") overlay("Weak connection… trying to recover");
+    if (s === "failed") { overlay("Connection failed. Retrying…"); send({ type: "restart" }); }
+  };
+  clearInterval(statsTimer);
+  statsTimer = setInterval(updateStats, 1000);
+}
+
+async function onOffer(m) {
+  if (!pc || m.restart !== true) newPeer();
+  await pc.setRemoteDescription({ type: "offer", sdp: m.sdp });
+  for (const c of pendingIce) { try { await pc.addIceCandidate(c); } catch (_) {} }
+  pendingIce = [];
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  send({ type: "answer", sdp: pc.localDescription.sdp });
+}
+
+async function updateStats() {
+  if (!pc) return;
+  const stats = await pc.getStats();
+  let inb = null, pair = null, local = null, codec = null;
+  stats.forEach((r) => {
+    if (r.type === "inbound-rtp" && r.kind === "video") inb = r;
+    if (r.type === "candidate-pair" && (r.nominated || r.selected) && r.state === "succeeded") pair = r;
+  });
+  if (pair) local = stats.get(pair.localCandidateId);
+  if (inb && inb.codecId) codec = stats.get(inb.codecId);
+  if (!inb) return;
+
+  const kbps = lastTs ? Math.round(((inb.bytesReceived - lastBytes) * 8) / (inb.timestamp - lastTs)) : 0;
+  lastBytes = inb.bytesReceived; lastTs = inb.timestamp;
+  const fps = Math.round(inb.framesPerSecond || 0);
+  const rtt = pair && pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null;
+  const route = !local ? "" : local.candidateType === "relay" ? "via relay" : local.candidateType === "host" ? "same Wi-Fi" : "internet direct";
+
+  let color = "var(--green)", label = "Good";
+  if ((rtt != null && rtt > 250) || (inb.framesDropped && fps < 12)) { color = "var(--amber)"; label = "OK"; }
+  if ((rtt != null && rtt > 600) || (fps > 0 && fps < 6)) { color = "var(--red)"; label = "Poor"; }
+
+  $("qDot").style.background = color;
+  $("qText").textContent = `${label} · ${inb.frameWidth || "?"}×${inb.frameHeight || "?"} · ${fps} FPS · ` +
+    `${(kbps / 1000).toFixed(1)} Mbps` + (rtt != null ? ` · ${rtt} ms` : "") + (route ? ` · ${route}` : "") +
+    (codec ? ` · ${codec.mimeType.split("/")[1]}` : "");
+  send({ type: "stats", fps, width: inb.frameWidth, height: inb.frameHeight, kbps, rtt, route });
+}
+
+// ---------- Buttons ----------
+$("connectBtn").onclick = async () => {
+  $("connectBtn").style.display = "none";
+  $("intro").textContent = "Open Screen Mirror on your phone.";
+  setStatus("Getting a code…");
+  closedByUser = false; session = null;
+  await loadIce();
+  openSocket();
+};
+
+$("soundBtn").onclick = (e) => {
+  e.stopPropagation();
+  const v = $("video"); v.muted = !v.muted; v.play().catch(() => {});
+  $("soundBtn").textContent = v.muted ? "🔇 Tap for sound" : "🔊 Sound on";
+};
+
+$("fsBtn").onclick = (e) => {
+  e.stopPropagation();
+  const st = $("stage"), v = $("video");
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else if (st.requestFullscreen) st.requestFullscreen().catch(() => v.webkitEnterFullscreen && v.webkitEnterFullscreen());
+  else if (st.webkitRequestFullscreen) st.webkitRequestFullscreen();
+  else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+};
+
+$("discBtn").onclick = (e) => { e.stopPropagation(); send({ type: "bye" }); endSession("Disconnected."); };
+
+function endSession(msg) {
+  closedByUser = true;
+  clearInterval(statsTimer); clearInterval(pingTimer); clearTimeout(retryTimer); stopCodeTimer();
+  try { pc && pc.close(); } catch (_) {}
+  dropWs();
+  pc = null; session = null;
+  $("video").srcObject = null;
+  overlay("");
+  showHome();
+  $("codeBox").style.display = "none";
+  $("connectBtn").style.display = ""; $("connectBtn").textContent = "Connect Mobile";
+  setStatus(msg);
+}
+
+// iPad sleep / tab switch: when we come back, make sure the socket is alive.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && session && !closedByUser && (!ws || ws.readyState > 1)) {
+    retries = 0; openSocket();
+  }
+});
+</script>
+</body>
+</html>

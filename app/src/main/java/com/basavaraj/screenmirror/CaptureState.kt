@@ -3,14 +3,18 @@ package com.basavaraj.screenmirror
 import android.os.Handler
 import android.os.Looper
 
-/** Shared live status between the capture service and the screen UI. */
+/** Shared live status between the casting service and the screen UI. */
 object CaptureState {
     data class Status(
         val running: Boolean = false,
+        val message: String = "Ready",
+        val connected: Boolean = false,
         val width: Int = 0,
         val height: Int = 0,
         val fps: Int = 0,
-        val message: String = "Ready"
+        val kbps: Int = 0,
+        val rttMs: Int = -1,
+        val route: String = ""
     )
 
     @Volatile
@@ -24,6 +28,8 @@ object CaptureState {
         current = s
         main.post { listeners.toList().forEach { it(s) } }
     }
+
+    fun edit(f: (Status) -> Status) = update(f(current))
 
     fun listen(l: (Status) -> Unit) {
         listeners += l

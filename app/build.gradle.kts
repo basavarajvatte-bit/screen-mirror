@@ -12,7 +12,7 @@ android {
         minSdk = 29 // Android 10+: needed for system audio capture later
         targetSdk = 34
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "0.2.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        versionName = "0.3.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
     }
 
     // Fixed key so every new APK installs as an update over the old one.
@@ -38,4 +38,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    implementation("io.github.webrtc-sdk:android:137.7151.04")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
