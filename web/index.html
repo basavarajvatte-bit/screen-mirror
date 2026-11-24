@@ -243,8 +243,22 @@ async function updateStats() {
 }
 
 // ---------- Buttons ----------
+// Safari hides this iPad's local address from WebRTC unless the page has had microphone
+// permission. We ask once and stop the mic immediately: nothing is recorded or sent.
+// This lets the phone connect directly over the same Wi-Fi / hotspot, with no relay.
+async function unlockLocalNetwork() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach((t) => t.stop());
+    return true;
+  } catch (_) { return false; }
+}
+
 $("connectBtn").onclick = async () => {
   $("connectBtn").style.display = "none";
+  setStatus("Tap Allow on the microphone question. Mic is switched off right away; it only unlocks the fast local connection.");
+  const local = await unlockLocalNetwork();
+  if (!local) setStatus("Without that permission, connection may fail on hotspot/same Wi-Fi.");
   $("intro").textContent = "Open Screen Mirror on your phone.";
   setStatus("Getting a code…");
   closedByUser = false; session = null;
