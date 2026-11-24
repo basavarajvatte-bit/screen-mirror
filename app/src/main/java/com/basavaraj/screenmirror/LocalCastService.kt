@@ -60,6 +60,7 @@ class LocalCastService : Service() {
     @Volatile private var frames = 0
     private var url = ""
     private var audio: AudioCapture? = null
+    private var soundNote = ""
 
     private val tick = object : Runnable {
         override fun run() {
@@ -68,7 +69,7 @@ class LocalCastService : Service() {
             CaptureState.edit {
                 it.copy(
                     running = true, connected = v > 0,
-                    message = if (v > 0) "Casting on hotspot / Wi-Fi\nOpen on iPad: $url"
+                    message = if (v > 0) "Casting on hotspot / Wi-Fi, $soundNote\nOpen on iPad: $url"
                               else "Waiting for iPad…\nOpen on iPad: $url",
                     width = width, height = height, fps = if (v > 0) f else 0,
                     route = "local", rttMs = -1, kbps = 0
@@ -124,8 +125,8 @@ class LocalCastService : Service() {
         reader = newReader()
         display = p.createVirtualDisplay("ScreenMirrorLocal", width, height, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader!!.surface, null, handler)
-        audio = AudioCapture { pcm -> server?.let { if (it.audioListeners > 0) it.publishAudio(pcm) } }
-            .takeIf { it.start(this, p) }
+        val a = AudioCapture { pcm -> server?.let { if (it.audioListeners > 0) it.publishAudio(pcm) } }
+        soundNote = if (a.start(this, p)) { audio = a; "with sound" } else "NO SOUND: ${a.problem}"
         handler?.post(tick)
     }
 

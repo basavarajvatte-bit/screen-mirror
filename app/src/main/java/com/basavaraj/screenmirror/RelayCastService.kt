@@ -57,6 +57,7 @@ class RelayCastService : Service() {
 
     private var audio: AudioCapture? = null
     private var soundOn = false
+    private var soundProblem: String? = null
 
     private var thread: HandlerThread? = null
     private var h: Handler? = null
@@ -170,6 +171,7 @@ class RelayCastService : Service() {
         if (audio != null) return
         val a = AudioCapture { pcm -> post { sendAudio(pcm) } }
         soundOn = a.start(this, projection ?: return)
+        soundProblem = a.problem
         audio = if (soundOn) a else null
     }
 
@@ -187,7 +189,7 @@ class RelayCastService : Service() {
     /** Tell the iPad this is a relay stream, and start with a fresh key frame. */
     private fun announce() {
         signaling?.send(JSONObject().put("type", "mode").put("mode", "relay"))
-        val snd = if (soundOn) "with sound" else "no sound (allow Microphone permission for sound)"
+        val snd = if (soundOn) "with sound" else "NO SOUND: ${soundProblem ?: "unknown reason"}"
         status { it.copy(connected = receiverOnline, message = if (receiverOnline) "Casting over internet, $snd" else "Waiting for iPad…") }
         requestKey()
     }
@@ -357,7 +359,7 @@ class RelayCastService : Service() {
         h?.removeCallbacks(statsTick)
         if (sendBye) signaling?.send(JSONObject().put("type", "bye"))
         signaling?.close(); signaling = null
-        audio?.stop(); audio = null; soundOn = false
+        audio?.stop(); audio = null; soundOn = false; soundProblem = null
         try { display?.release() } catch (_: Exception) {}
         display = null
         try { codec?.stop() } catch (_: Exception) {}
