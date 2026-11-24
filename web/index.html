@@ -272,7 +272,9 @@ function startRelay() {
     if (fps < 12) { color = "var(--amber)"; label = "OK"; }
     if (fps < 5) { color = "var(--red)"; label = "Poor"; }
     $("qDot").style.background = color;
-    $("qText").textContent = `${label} · ${canvas.width}×${canvas.height} · ${fps} FPS · ${(kbps / 1000).toFixed(1)} Mbps · internet`;
+    const snd = aChunks > 0 ? (actx && actx.state === "running" && soundOn ? "🔊 sound playing" : "🔇 sound arriving, tap for sound") : "no sound from phone";
+    aChunks = 0;
+    $("qText").textContent = `${label} · ${canvas.width}×${canvas.height} · ${fps} FPS · ${(kbps / 1000).toFixed(1)} Mbps · internet · ${snd}`;
     send({ type: "stats", fps, width: canvas.width, height: canvas.height, kbps, rtt: null, route: "relay" });
   }, 1000);
   askKey(true);
@@ -308,7 +310,10 @@ function newDecoder(codec) {
 // ---- Sound (internet mode): 24 kHz mono 16-bit pieces, played with Web Audio ----
 const RATE = 24000;
 let actx = null, gain = null, nextT = 0, soundOn = true;
+let aChunks = 0;
 function audioInit() {
+  // iPad mutes web sound when Silent mode is on. "playback" tells Safari this is media, like a video.
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (_) {}
   try {
     if (!actx) {
       actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -318,6 +323,7 @@ function audioInit() {
   } catch (_) {}
 }
 function playPcm(buf) {
+  aChunks++;
   if (!actx || !soundOn) return;
   if (actx.state !== "running") { $("soundBtn").textContent = "🔇 Tap for sound"; return; }
   const n = (buf.byteLength - 9) >> 1;

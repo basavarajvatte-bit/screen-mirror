@@ -70,6 +70,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 const RATE = 24000;
 let actx = null, soundOn = false, nextT = 0, audioAbort = null;
 async function startSound() {
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (_) {}
   if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
   await actx.resume();
   soundOn = true; document.getElementById("snd").textContent = "🔊 Sound on";
